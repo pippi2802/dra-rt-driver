@@ -78,6 +78,8 @@ spec:
           mountPath: /var/lib/kubelet/plugins
         - name: cdi
           mountPath: /var/run/cdi
+        - name: host-cgroup
+          mountPath: /sys/fs/cgroup
         lifecycle:
           preStop:
             exec: 
@@ -92,6 +94,10 @@ spec:
       - name: cdi
         hostPath:
           path: /var/run/cdi
+      - name: host-cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+          type: Directory
       {{- with .Values.kubeletPlugin.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

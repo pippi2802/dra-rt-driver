@@ -150,6 +150,13 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *drapbv1.Claim) 
 			Error: fmt.Sprintf("error preparing resource: %v", err),
 		}
 	}
+
+	// Seed the real-time (HCBS) cgroup v2 chain for this pod. This writes the RT
+	// budget to the parent slices now and defers the pod-slice/leaf seeding to a
+	// background goroutine (the kubelet has not created them yet). Seeding never
+	// blocks preparation: a failure only means the pod runs without RT budget.
+	seedRtCgroupForClaim(claim.Uid, d.nascrd.Spec)
+
 	fmt.Println("prepared CDI devices:", prepared)
 	klog.FromContext(ctx).Info("Prepared devices", "claim", claim.Uid)
 	return &drapbv1.NodePrepareResourceResponse{CDIDevices: prepared}
