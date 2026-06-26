@@ -14,6 +14,11 @@
 ARG GOLANG_VERSION=x.x.x
 FROM golang:${GOLANG_VERSION}
 
+# Some dev tools (e.g. ineffassign >= v0.2.0) now require a newer Go than the
+# build image. Allow `go install` to automatically download the toolchain each
+# tool asks for instead of failing with GOTOOLCHAIN=local.
+ENV GOTOOLCHAIN=auto
+
 RUN go install github.com/gordonklaus/ineffassign@latest && \
     go install github.com/client9/misspell/cmd/misspell@latest
 

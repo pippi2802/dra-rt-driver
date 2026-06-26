@@ -222,3 +222,118 @@ ls -l /usr/local/bin/containerd
 
 sudo rm -f /usr/bin/containerd  # Remove the existing /usr/bin/containerd binary
 sudo ln -s /usr/local/bin/containerd /usr/bin/containerd  # Create a symbolic link -->
+
+### Building with `make`
+
+Alternatively, build and tag the driver image with the Makefile. The Makefile
+appends the driver name to `REGISTRY`, so pass only the registry/namespace:
+
+```bash
+# REGISTRY=pippina2 + driver name -> pippina2/dra-rt-driver:v0.1.2
+make REGISTRY=pippina2 VERSION=v0.1.2 docker-build
+docker push pippina2/dra-rt-driver:v0.1.2
+```
+
+List the available targets at any time:
+
+```bash
+grep -E '^[a-zA-Z0-9_-]+:' Makefile
+```
+
+#### Build troubleshooting
+
+* **`make: command not found`** — install it: `sudo apt update && sudo apt install -y make`.
+* **`make: *** No rule to make target 'docker-'`** — the target name was split
+  by a terminal line-wrap. Type `docker-build` as one unbroken token on a single
+  line (the `-build` must stay attached to `docker`).
+* **`REGISTRY` value** — use `REGISTRY=pippina2`, not
+  `REGISTRY=pippina2/dra-rt-driver`. The Makefile already sets
+  `IMAGE_NAME = $(REGISTRY)/$(DRIVER_NAME)`, so passing the full path produces a
+  doubled name like `pippina2/dra-rt-driver/dra-rt-driver`.
+* **Docker permission denied** — prefer adding your user to the `docker` group
+  over running `sudo make`: `sudo usermod -aG docker $USER`, then re-login.
+
+## Real-time (HCBS) cgroup v2 seeding
+
+On a pure cgroup v2 (unified) hierarchy with the systemd cgroup driver, a pod's
+leaf cgroup cannot be given a real-time (SCHED_FIFO/RR) budget unless **every**
+ancestor slice already has one — the kernel admission test enforces, on every
+core, that a child's `rt_runtime` never exceeds its parent's. Stock `runc` on
+cgroup v2 never writes any RT budget, so the leaf always ends up with
+`cpu.rt_runtime_us = 0`.
+
+To make RT enforcement work, **the driver seeds the whole cgroup chain itself**
+during `NodePrepareResources`; `runc` and `containerd` stay stock (no RT patch
+required). The chain it seeds is:
+
+```
+/sys/fs/cgroup                                       (root)
+  kubepods.slice                                     (parent)
+    kubepods-besteffort.slice                        (QoS parent)
+      kubepods-besteffort-pod<UID>.slice             (pod slice)
+        cri-containerd-<containerID>.scope           (leaf)
+```
+
+* **Parents** (root, kubepods, besteffort) get a generous scalar reservation
+  (`cpu.rt_runtime_us = 950000`, `cpu.rt_period_us = 1000000`) applied to all
+  cores. This is the standard global RT bound and leaves headroom for any
+  per-pod reservation that fits within it.
+* **Pod slice and leaf scope(s)** get the exact per-core reservation requested
+  by the claim, written in the multi-core form
+  `cpu.rt_runtime_us = "<runtime> <cpu> <runtime> <cpu> ..."` (the removed
+  `cpu.rt_multi_runtime_us` is no longer used).
+* Each level is written in the order **runtime → period → runtime**: a freshly
+  created slice starts with `period == 0`, so the first runtime write may be
+  rejected with `EINVAL` and is treated as best-effort.
+* The pod slice and leaf usually do not exist yet at prepare time (the kubelet
+  creates them only when it starts the pod), so the driver defers their seeding
+  to a background goroutine that polls for them to appear (default timeout 60s).
+  All writes are non-fatal and logged, so a seeding failure never blocks the pod
+  from reaching `Running` — it only runs without an RT budget.
+
+### Requirements for seeding to work
+
+* **Kernel:** the RT/HCBS kernel (e.g. `rt-cgroups-multi-260615`) with
+  `RT_GROUP_SCHED` and the multi-core HCBS patches. This is what creates the
+  `cpu.rt_runtime_us` / `cpu.rt_period_us` files and enforces the admission
+  tests. Confirm with `cat /sys/fs/cgroup/cpu.rt_runtime_us`.
+* **cgroup driver:** `systemd` (matches the slice/scope path construction).
+* **containerd:** stock, with `enable_cdi = true` in
+  `/etc/containerd/config.toml`. Confirm with
+  `grep -i enable_cdi /etc/containerd/config.toml`.
+* **Plugin mount:** the kubelet-plugin DaemonSet mounts the host
+  `/sys/fs/cgroup` into the (privileged) plugin container so it can write the RT
+  files. This is configured in
+  `deployments/helm/dra-rt-driver/templates/kubeletplugin.yaml`.
+
+### Deploy and verify
+
+```bash
+# build + push (see "Building with make" above)
+make REGISTRY=pippina2 VERSION=v0.1.2 docker-build
+docker push pippina2/dra-rt-driver:v0.1.2
+
+# deploy
+helm upgrade --install dra-rt-driver deployments/helm/dra-rt-driver \
+  --set image.repository=pippina2/dra-rt-driver --set image.tag=v0.1.2
+kubectl -n dra-rt-driver rollout restart ds/dra-rt-driver-kubeletplugin
+
+# follow the seeding logs
+kubectl -n dra-rt-driver logs ds/dra-rt-driver-kubeletplugin -c plugin | grep hcbs
+```
+
+After a test pod is `Running`, verify the leaf actually has an RT budget:
+
+```bash
+# nonzero runtime/period on the leaf scope
+cat /sys/fs/cgroup/kubepods.slice/kubepods-besteffort.slice/\
+kubepods-besteffort-pod<UID>.slice/cri-containerd-<id>.scope/cpu.rt_runtime_us
+
+# the workload can become SCHED_FIFO
+chrt -f -p 90 <pid>   # should report SCHED_FIFO
+```
+
+> **Note (multi-pod):** the generous scalar at the parents works cleanly for a
+> single RT pod. Running multiple concurrent RT pods requires cumulative
+> per-core accounting at the besteffort/kubepods slices (the sum of children
+> must stay within the parent reservation on each core).
