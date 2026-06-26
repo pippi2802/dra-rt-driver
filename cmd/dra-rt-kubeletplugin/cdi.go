@@ -27,6 +27,7 @@ import (
 	cdiapi "github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
 	cdispec "github.com/container-orchestrated-devices/container-device-interface/specs-go"
 	drapbv1 "k8s.io/kubelet/pkg/apis/dra/v1alpha3"
+	klog "k8s.io/klog/v2"
 
 	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
 )
@@ -38,6 +39,26 @@ const (
 
 	cdiCommonDeviceName = "common"
 )
+
+// rtlog is a thin wrapper around klog used for tracing the RT CDI spec flow.
+func rtlog(format string, args ...interface{}) {
+	klog.Infof("hcbs-cdi: "+format, args...)
+}
+
+// atLeastCDIVersion floors a CDI spec version at v0.6.0. MinimumRequiredVersion
+// returns 0.3.0 for our env-only specs, but newer containerd CDI implementations
+// reject any spec below v0.5.0 ("the spec version must be at least v0.5.0") and a
+// single invalid spec aborts the ENTIRE registry refresh, making every device
+// unresolvable. Our specs only use Env edits (valid since 0.3.0), so 0.6.0
+// (supported by container-device-interface v0.5.4) is always a safe floor.
+func atLeastCDIVersion(v string) string {
+	switch v {
+	case "0.1.0", "0.2.0", "0.3.0", "0.4.0":
+		return "0.6.0"
+	default:
+		return v
+	}
+}
 
 type CDIHandler struct {
 	registry cdiapi.Registry
@@ -84,7 +105,7 @@ func (cdi *CDIHandler) CreateCommonSpecFile() error {
 	if err != nil {
 		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
 	}
-	spec.Version = minVersion
+	spec.Version = atLeastCDIVersion(minVersion)
 	// randomStr, err := generateRandomString(5)
 	specName, err := cdiapi.GenerateNameForTransientSpec(spec, cdiCommonDeviceName)
 	if err != nil {
@@ -103,40 +124,57 @@ func generateRandomString(n int) (string, error) {
 }
 
 func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, devices *PreparedCpuset, rtCDIDevices []string) error {
-	// specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, claimUID)
+	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, claimUID)
 
-	spec := &cdispec.Spec{
-		Kind:    cdiKind,
-		Devices: []cdispec.Device{},
-	}
 	fmt.Println("rtcdidevices:", rtCDIDevices)
-	cpuIdx := 0
+	rtlog("CreateClaimSpecFile claim=%s specName=%s rtCDIDevices=%v", claimUID, specName, rtCDIDevices)
+
 	switch devices.Type() {
 	case nascrd.RtCpuType:
-		for _, device := range devices.RtCpu.Cpuset {
-			cdiDevice := cdispec.Device{
-				Name: "cpu" + strconv.Itoa(device.id),
-				ContainerEdits: cdispec.ContainerEdits{
-					Env: []string{
-						fmt.Sprintf("RT_DEVICE_%d=%v", cpuIdx, strconv.Itoa(device.id)),
-					},
-				},
-			}
-			spec.Devices = append(spec.Devices, cdiDevice)
-			cpuIdx++
+		if rtCDIDevices == nil || len(rtCDIDevices) < 2 {
+			rtlog("CreateClaimSpecFile claim=%s GUARD TRIPPED (rtCDIDevices nil/len<2) -> per-claim spec NOT written", claimUID)
+			return fmt.Errorf("rtCDIDevices is nil or incomplete: %v", rtCDIDevices)
 		}
 	default:
 		return fmt.Errorf("unknown device type: %v", devices.Type())
+	}
+
+	// The Kind/device name written here MUST match exactly what GetClaimDevices
+	// advertises to the kubelet, namely:
+	//   QualifiedName(rtCDIDevices[0], "CPUSET", rtCDIDevices[1])
+	//   => "<rtCDIDevices[0]>/CPUSET=<rtCDIDevices[1]>"
+	// where rtCDIDevices[0] is "runtime-<R>.period-<P>" and rtCDIDevices[1] is
+	// the cpuset string (e.g. "1" or "1-2"). Without this spec on disk, a
+	// CDI-enforcing containerd rejects the pod with "unresolvable CDI devices".
+	kind := rtCDIDevices[0] + "/CPUSET"
+	deviceName := rtCDIDevices[1]
+
+	spec := &cdispec.Spec{
+		Kind: kind,
+		Devices: []cdispec.Device{
+			{
+				Name: deviceName,
+				ContainerEdits: cdispec.ContainerEdits{
+					Env: []string{
+						fmt.Sprintf("RT_RUNTIME_PERIOD=%s", rtCDIDevices[0]),
+						fmt.Sprintf("RT_CPUSET=%s", rtCDIDevices[1]),
+					},
+				},
+			},
+		},
 	}
 
 	minVersion, err := cdiapi.MinimumRequiredVersion(spec)
 	if err != nil {
 		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
 	}
-	spec.Version = minVersion
-
-	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, claimUID)
-	return cdi.registry.SpecDB().WriteSpec(spec, specName)
+	spec.Version = atLeastCDIVersion(minVersion)
+	if werr := cdi.registry.SpecDB().WriteSpec(spec, specName); werr != nil {
+		rtlog("CreateClaimSpecFile claim=%s WriteSpec FAILED specName=%s: %v", claimUID, specName, werr)
+		return werr
+	}
+	rtlog("CreateClaimSpecFile claim=%s WriteSpec OK -> per-claim spec WRITTEN to CDI root (kind=%s device=%s)", claimUID, kind, deviceName)
+	return nil
 }
 
 func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
@@ -151,9 +189,18 @@ func (cdi *CDIHandler) GetClaimDevices(claimUID string, devices *PreparedCpuset,
 
 	switch devices.Type() {
 	case nascrd.RtCpuType:
-		for _, device := range devices.RtCpu.Cpuset {
-			cdiDevices = append(cdiDevices,
-				cdiapi.QualifiedName(cdiVendor, cdiClass, "cpu"+strconv.Itoa(device.id)))
+		// for _, device := range devices.RtCpu.Cpuset {
+		// cdiDevice := cdiapi.QualifiedName(cdiVendor, cdiClass, rtCDIDevices)
+		if rtCDIDevices != nil {
+			cdiDevice := cdiapi.QualifiedName(rtCDIDevices[0], "CPUSET", rtCDIDevices[1])
+			fmt.Println("getclaimdevices:")
+			fmt.Println(rtCDIDevices[0])
+			fmt.Println(rtCDIDevices[1])
+			fmt.Println(cdiDevice)
+			cdiDevices = append(cdiDevices, cdiDevice)
+
+		} else {
+			return nil, fmt.Errorf("rtcdidevices is nil")
 		}
 	default:
 		return nil, fmt.Errorf("unknown device type: %v", devices.Type())
@@ -165,13 +212,16 @@ func (cdi *CDIHandler) GetClaimDevices(claimUID string, devices *PreparedCpuset,
 func (cdi *CDIHandler) WriteCgroupToCDI(claim *drapbv1.Claim, crd nascrd.NodeAllocationStateSpec) ([]string, error) {
 	if _, ok := crd.AllocatedClaims[claim.Uid]; ok {
 		if crd.AllocatedClaims[claim.Uid].RtCpu == nil {
+			rtlog("WriteCgroupToCDI claim=%s present in cached NAS but RtCpu==nil", claim.Uid)
 			return nil, fmt.Errorf("claim %v does not have rtcpu", claim.Uid)
 		} else {
 			if crd.AllocatedClaims[claim.Uid].RtCpu.CgroupUID == "" {
+				rtlog("WriteCgroupToCDI claim=%s present in cached NAS but CgroupUID empty", claim.Uid)
 				return nil, fmt.Errorf("claim %v does not have cgroupuid", claim.Uid)
 			}
 		}
 	} else {
+		rtlog("WriteCgroupToCDI claim=%s NOT in cached NAS AllocatedClaims (stale cache / race) -> returning empty", claim.Uid)
 		return nil, fmt.Errorf("claim %v does not exist", claim.Uid)
 	}
 	// allocatedCgroups := crd.AllocatedPodCgroups[cgroupUID]
