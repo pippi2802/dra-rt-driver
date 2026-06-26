@@ -42,10 +42,10 @@ endif
 cmds: $(CMD_TARGETS)
 $(CMD_TARGETS): cmd-%:
 	CGO_LDFLAGS_ALLOW='-Wl,--unresolved-symbols=ignore-in-object-files' GOOS=$(GOOS) \
-		go build -ldflags "-s -w -X main.version=$(VERSION)" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
+		go build -buildvcs=false -ldflags "-s -w -X main.version=$(VERSION)" $(COMMAND_BUILD_OPTIONS) $(MODULE)/cmd/$(*)
 
 build:
-	GOOS=$(GOOS) go build ./...
+	GOOS=$(GOOS) go build -buildvcs=false ./...
 
 examples: $(EXAMPLE_TARGETS)
 $(EXAMPLE_TARGETS): example-%:
@@ -150,11 +150,11 @@ $(DOCKER_TARGETS): docker-%: .build-image
 	@echo "Running 'make $(*)' in docker container $(BUILDIMAGE)"
 	$(DOCKER) run \
 		--rm \
-		-e HOME=$(PWD) \
-		-e GOCACHE=$(PWD)/.cache/go \
-		-e GOPATH=$(PWD)/.cache/gopath \
-		-v $(PWD):$(PWD) \
-		-w $(PWD) \
+		-e HOME=$(CURDIR) \
+		-e GOCACHE=$(CURDIR)/.cache/go \
+		-e GOPATH=$(CURDIR)/.cache/gopath \
+		-v $(CURDIR):$(CURDIR) \
+		-w $(CURDIR) \
 		--user $$(id -u):$$(id -g) \
 		$(BUILDIMAGE) \
 			make $(*)
