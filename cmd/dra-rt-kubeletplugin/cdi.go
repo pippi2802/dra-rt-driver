@@ -45,16 +45,17 @@ func rtlog(format string, args ...interface{}) {
 	klog.Infof("hcbs-cdi: "+format, args...)
 }
 
-// atLeastCDIVersion floors a CDI spec version at v0.6.0. MinimumRequiredVersion
+// atLeastCDIVersion floors a CDI spec version at v0.5.0. MinimumRequiredVersion
 // returns 0.3.0 for our env-only specs, but newer containerd CDI implementations
 // reject any spec below v0.5.0 ("the spec version must be at least v0.5.0") and a
 // single invalid spec aborts the ENTIRE registry refresh, making every device
-// unresolvable. Our specs only use Env edits (valid since 0.3.0), so 0.6.0
-// (supported by container-device-interface v0.5.4) is always a safe floor.
+// unresolvable. Our specs only use Env edits (valid since 0.3.0), and v0.5.0 is
+// the highest version supported by container-device-interface v0.5.4 (the
+// version this driver vendors), so it is always a safe floor.
 func atLeastCDIVersion(v string) string {
 	switch v {
 	case "0.1.0", "0.2.0", "0.3.0", "0.4.0":
-		return "0.6.0"
+		return "0.5.0"
 	default:
 		return v
 	}
