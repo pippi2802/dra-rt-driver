@@ -134,8 +134,9 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, devices *PreparedCpu
 		return fmt.Errorf("failed to get minimum required CDI spec version: %v", err)
 	}
 	spec.Version = minVersion
-	// return cdi.registry.SpecDB().WriteSpec(spec, specName)
-	return nil
+
+	specName := cdiapi.GenerateTransientSpecName(cdiVendor, cdiClass, claimUID)
+	return cdi.registry.SpecDB().WriteSpec(spec, specName)
 }
 
 func (cdi *CDIHandler) DeleteClaimSpecFile(claimUID string) error {
@@ -150,18 +151,9 @@ func (cdi *CDIHandler) GetClaimDevices(claimUID string, devices *PreparedCpuset,
 
 	switch devices.Type() {
 	case nascrd.RtCpuType:
-		// for _, device := range devices.RtCpu.Cpuset {
-		// cdiDevice := cdiapi.QualifiedName(cdiVendor, cdiClass, rtCDIDevices)
-		if rtCDIDevices != nil {
-			cdiDevice := cdiapi.QualifiedName(rtCDIDevices[0], "CPUSET", rtCDIDevices[1])
-			fmt.Println("getclaimdevices:")
-			fmt.Println(rtCDIDevices[0])
-			fmt.Println(rtCDIDevices[1])
-			fmt.Println(cdiDevice)
-			cdiDevices = append(cdiDevices, cdiDevice)
-
-		} else {
-			return nil, fmt.Errorf("rtcdidevices is nil")
+		for _, device := range devices.RtCpu.Cpuset {
+			cdiDevices = append(cdiDevices,
+				cdiapi.QualifiedName(cdiVendor, cdiClass, "cpu"+strconv.Itoa(device.id)))
 		}
 	default:
 		return nil, fmt.Errorf("unknown device type: %v", devices.Type())
