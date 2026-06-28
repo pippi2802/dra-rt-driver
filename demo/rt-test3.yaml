@@ -6,7 +6,7 @@ kind: Namespace
 metadata:
   name: rt-test3
 ---
-apiVersion: resource.k8s.io/v1alpha2
+apiVersion: resource.k8s.io/v1alpha1
 kind: ResourceClaimTemplate
 metadata:
   namespace: rt-test3
@@ -19,7 +19,7 @@ spec:
       kind: RtClaimParameters
       name: rtclaims-a
 ---
-apiVersion: resource.k8s.io/v1alpha2
+apiVersion: resource.k8s.io/v1alpha1
 kind: RtClaimParameters
 metadata:
   namespace: rt-test3
