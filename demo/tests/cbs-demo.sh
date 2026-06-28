@@ -114,42 +114,57 @@ if [[ ${#S_PATH[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# ---- 2. choose the contended core ---------------------------------------------
-if [[ -n $FORCE_CORE ]]; then
-  CORE=$FORCE_CORE
-else
-  CORE=-1; best=-1
-  for c in "${!CORE_COUNT[@]}"; do
-    if (( CORE_COUNT[$c] > best )); then best=${CORE_COUNT[$c]}; CORE=$c; fi
-  done
-fi
+# ---- 2. assign each RT container a core to run on ------------------------------
+# Default ("all" mode): every RT container runs simultaneously, each on its own
+# first reserved core -> shows N containers each independently guaranteed their
+# share under full load. If a core is FORCED and >=2 containers include it, those
+# containers contend on that single core -> true same-core competition arbitrated
+# by the CBS servers. LOOPS_PER_CTR>1 puts several busy loops in one container to
+# show the tasks of a single CBS server sharing that server's reservation.
+LOOPS=${LOOPS_PER_CTR:-1}
 
 echo "===================================================================="
 echo " CBS bandwidth-isolation demo"
-echo " contended CPU core : $CORE"
-echo " window             : ${DUR}s   (CLK_TCK=${HZ} Hz)"
+if [[ -n $FORCE_CORE ]]; then
+  echo " mode                : forced contention on core $FORCE_CORE"
+else
+  echo " mode                : all RT containers at once (each on its own core)"
+fi
+echo " loops per container : $LOOPS"
+echo " window              : ${DUR}s   (CLK_TCK=${HZ} Hz)"
 echo "===================================================================="
 
-# ---- 3. start one busy SCHED_FIFO loop per container on that core --------------
-declare -a R_NAME R_RSV R_PER R_START R_LOOP
+# ---- 3. start busy SCHED_FIFO loop(s) per container ---------------------------
+declare -a R_KEY R_NAME R_CORE R_RSV R_PER R_LOOP R_START
 for i in "${!S_PATH[@]}"; do
-  case " ${S_CORES[$i]} " in *" $CORE "*) ;; *) continue ;; esac   # core not in cpuset
+  if [[ -n $FORCE_CORE ]]; then
+    case " ${S_CORES[$i]} " in *" $FORCE_CORE "*) core=$FORCE_CORE ;; *) continue ;; esac
+  else
+    core=${S_CORES[$i]%% *}            # first reserved core of this container
+  fi
   leaf=${S_PATH[$i]}
-  taskset -c "$CORE" bash -c 'while :; do :; done' &
-  lp=$!
-  LOOP_PIDS+=("$lp")
-  # Move the loop into the container's RT cgroup, then make it a level-2 FIFO task.
-  echo "$lp" > "$leaf/cgroup.procs" 2>/dev/null || {
-    echo "  ! could not move pid $lp into ${S_NAME[$i]} cgroup (skipping)"; continue; }
-  chrt -f -p 90 "$lp" 2>/dev/null || echo "  ! could not set SCHED_FIFO on ${S_NAME[$i]}"
-  R_NAME+=("${S_NAME[$i]}"); R_RSV+=("${S_RSV[$i]}"); R_PER+=("${S_PER[$i]}")
-  R_LOOP+=("$lp"); R_START+=("$(read_jiffies "$lp")")
-  echo "  started busy FIFO/90 loop pid=$lp in container '${S_NAME[$i]}' on core $CORE"
+  started=0
+  for ((k=0; k<LOOPS; k++)); do
+    taskset -c "$core" bash -c 'while :; do :; done' &
+    lp=$!
+    LOOP_PIDS+=("$lp")
+    if ! echo "$lp" > "$leaf/cgroup.procs" 2>/dev/null; then
+      echo "  ! could not move pid $lp into ${S_NAME[$i]} cgroup (skipping)"
+      kill -9 "$lp" 2>/dev/null || true
+      continue
+    fi
+    chrt -f -p 90 "$lp" 2>/dev/null || echo "  ! could not set SCHED_FIFO on ${S_NAME[$i]}"
+    R_KEY+=("${S_NAME[$i]}@$core"); R_NAME+=("${S_NAME[$i]}"); R_CORE+=("$core")
+    R_RSV+=("${S_RSV[$i]}"); R_PER+=("${S_PER[$i]}")
+    R_LOOP+=("$lp"); R_START+=("$(read_jiffies "$lp")")
+    started=$((started+1))
+  done
+  [[ $started -gt 0 ]] && echo "  started $started busy FIFO/90 loop(s) in '${S_NAME[$i]}' on core $core"
 done
 
 if [[ ${#R_LOOP[@]} -eq 0 ]]; then
-  echo "No RT container includes core $CORE in its cpuset. Pick another core:"
-  echo "  cores in use -> ${!CORE_COUNT[*]}"
+  echo "No RT container matched. cores in use -> ${!CORE_COUNT[*]}"
+  [[ -n $FORCE_CORE ]] && echo "(no RT container includes core $FORCE_CORE)"
   exit 1
 fi
 
@@ -158,17 +173,30 @@ echo "--------------------------------------------------------------------"
 echo "running for ${DUR}s ..."
 sleep "$DUR"
 
-printf '%-26s %-10s %-12s %-12s\n' "CONTAINER" "CORE" "RESERVED%" "ACHIEVED%"
-printf '%-26s %-10s %-12s %-12s\n' "--------------------------" "----" "---------" "---------"
-total=0
+# Aggregate achieved CPU per container (sum its loops) and per core.
+declare -A ACH_BY RSV_BY CORE_OF CORE_TOT
 for i in "${!R_LOOP[@]}"; do
   endj=$(read_jiffies "${R_LOOP[$i]}")
   used=$(( endj - R_START[$i] ))
-  ach=$(awk -v u="$used" -v d="$DUR" -v hz="$HZ" 'BEGIN{ printf "%.1f", (u/(d*hz))*100 }')
-  rsvpct=$(rt_percent "${R_RSV[$i]}" "${R_PER[$i]}")
-  printf '%-26s %-10s %-12s %-12s\n' "${R_NAME[$i]}" "$CORE" "$rsvpct" "$ach"
-  total=$(awk -v t="$total" -v a="$ach" 'BEGIN{ printf "%.1f", t+a }')
+  ach=$(awk -v u="$used" -v d="$DUR" -v hz="$HZ" 'BEGIN{ printf "%.4f", (u/(d*hz))*100 }')
+  key=${R_KEY[$i]}
+  ACH_BY[$key]=$(awk -v a="${ACH_BY[$key]:-0}" -v b="$ach" 'BEGIN{ printf "%.4f", a+b }')
+  RSV_BY[$key]=$(rt_percent "${R_RSV[$i]}" "${R_PER[$i]}")
+  CORE_OF[$key]=${R_CORE[$i]}
+  CORE_TOT[${R_CORE[$i]}]=$(awk -v a="${CORE_TOT[${R_CORE[$i]}]:-0}" -v b="$ach" 'BEGIN{ printf "%.4f", a+b }')
 done
+
+printf '%-26s %-8s %-12s %-12s\n' "CONTAINER" "CORE" "RESERVED%" "ACHIEVED%"
+printf '%-26s %-8s %-12s %-12s\n' "--------------------------" "----" "---------" "---------"
+for key in "${!ACH_BY[@]}"; do
+  printf '%-26s %-8s %-12s %-12s\n' "${key%@*}" "${CORE_OF[$key]}" "${RSV_BY[$key]}" \
+         "$(printf '%.1f' "${ACH_BY[$key]}")"
+done | sort
 echo "--------------------------------------------------------------------"
-echo "total CPU used on core $CORE : ${total}%   (remainder left idle by the CBS servers)"
-echo "Each container stays at its reservation regardless of demand => CBS isolation works."
+for c in "${!CORE_TOT[@]}"; do
+  printf 'core %-3s total used : %5.1f%%   (rest left idle by the CBS servers)\n' \
+         "$c" "${CORE_TOT[$c]}"
+done | sort
+echo "Each CBS server caps its container at runtime/period regardless of demand."
+echo "When >1 container shares a core their guaranteed shares add up but never"
+echo "exceed the reservations => SCHED_DEADLINE bandwidth isolation."
