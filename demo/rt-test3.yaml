@@ -6,11 +6,11 @@ kind: Namespace
 metadata:
   name: rt-test3
 ---
-apiVersion: resource.k8s.io/v1alpha1
+apiVersion: resource.k8s.io/v1alpha2
 kind: ResourceClaimTemplate
 metadata:
   namespace: rt-test3
-  name: rt.example.com
+  name: rt.example.com-a
 spec:
   spec:
     resourceClassName: rt.example.com
@@ -19,7 +19,7 @@ spec:
       kind: RtClaimParameters
       name: rtclaims-a
 ---
-apiVersion: resource.k8s.io/v1alpha1
+apiVersion: rt.resource.example.com/v1alpha1
 kind: RtClaimParameters
 metadata:
   namespace: rt-test3
@@ -29,11 +29,11 @@ spec:
   runtime: 1000
   period: 1000000
 ---
-apiVersion: rt.resource.example.com/v1alpha1
-kind: RtClaimParameters
+apiVersion: resource.k8s.io/v1alpha2
+kind: ResourceClaimTemplate
 metadata:
   namespace: rt-test3
-  name: rt.example.com
+  name: rt.example.com-b
 spec:
   spec:
     resourceClassName: rt.example.com
@@ -72,7 +72,7 @@ spec:
   resourceClaims:
   - name: rtcpu-a
     source:
-      resourceClaimTemplateName: rt.example.com
+      resourceClaimTemplateName: rt.example.com-a
 ---
 apiVersion: v1
 kind: Pod
@@ -93,6 +93,6 @@ spec:
   resourceClaims:
   - name: rtcpu-b
     source:
-      resourceClaimTemplateName: rt.example.com
+      resourceClaimTemplateName: rt.example.com-b
 
 ---
