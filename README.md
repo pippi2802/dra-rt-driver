@@ -13,6 +13,9 @@ useful to run through a quick demo of it in action.
 
 ### Prerequisites
 
+OS requirements:
+* [linux kernel v7.0.0+](https://eur02.safelinks.protection.outlook.com/?url=https%3A%2F%2Fgithub.com%2FYurand2000%2FHCBS-patch%2Ftree%2Frt-cgroups-multi-260514&data=05%7C02%7Cs.brighi%40student.tue.nl%7C35dd77522350446d6dc508decafef25f%7Ccc7df24760ce4a0f9d75704cf60efc64%7C0%7C0%7C639171393504541760%7CUnknown%7CTWFpbGZsb3d8eyJFbXB0eU1hcGkiOnRydWUsIlYiOiIwLjAuMDAwMCIsIlAiOiJXaW4zMiIsIkFOIjoiTWFpbCIsIldUIjoyfQ%3D%3D%7C0%7C%7C%7C&sdata=DtHHZAHqsiiPEYj%2BgqscnEGj8FRRmcJOt64QzNyhxSA%3D&reserved=0)
+
 <!-- * [GNU Make 3.81+](https://www.gnu.org/software/make/)
 * [GNU Tar 1.34+](https://www.gnu.org/software/tar/) -->
 * [docker v20.10+ (including buildx)](https://docs.docker.com/engine/install/)
@@ -29,7 +32,7 @@ However, we install a custom container runtime (RT-containerd and RT-runc).
 To install the RT-containerd, we must clone it's repository, compile, and install it:
 
 ```bash
-git clone -b rt https://github.com/nasm-samimi/containerd.git
+git clone -b rt https://github.com/pippi2802/containerd.git
 cd containerd
 make
 sudo make install
@@ -45,7 +48,7 @@ containerd requires CNI plugins which can be installed as explained [here](https
 To install the RT-runc, we must clone it's repository, compile, and install it:
 ```bash
 sudo apt install libseccomp-dev
-git clone -b rt https://github.com/nasm-samimi/runc.git
+git clone -b rt-v1.1.14 https://github.com/pippi2802/runc.git
 cd runc
 make
 sudo install -D -m0755 runc /usr/local/sbin/runc
@@ -78,14 +81,13 @@ subdirectory. All of the scripts and example Pod specs used in this demo are
 contained here, so take a moment to browse through the various files and see
 what's available:
 ```bash
-git clone https://github.com/nasm-samimi/dra-rt-driver.git
+git clone -b rt-v0.1.1 https://github.com/pippi2802/dra-rt-driver.git
 cd dra-rt-driver/demo
 ```
 
-
 coming up as expected:
-```console
-$ kubectl get pod -A
+```bash
+kubectl get pod -A
 
 ```
 
@@ -94,19 +96,22 @@ And then install the RT-DRA via `helm`:
 helm upgrade -i \
   --create-namespace \
   --namespace dra-rt-driver \
+  --set image.repository=pippina2/dra-rt-driver \
+  --set image.tag=v0.1.3 \
+  --set image.pullPolicy=Always \
   dra-rt-driver \
   deployments/helm/dra-rt-driver
 ```
 
 Double check the driver components have come up successfully:
-```console
-$ kubectl get pod -n dra-rt-driver
+```bash
+kubectl get pod -n dra-rt-driver
 
 ```
 
 And show the initial state of available GPU devices on the worker node:
-```console
-$ kubectl describe -n dra-rt-driver nas/dra-example-driver-cluster-worker
+```bash
+kubectl describe -n dra-rt-driver nas/dra-example-driver-cluster-worker
 ...
 Spec:
   Allocatable Cpuset:
@@ -136,8 +141,8 @@ kubectl create -f rt-test{1,2,3,4}.yaml
 ```
 
 And verify that they are coming up successfully:
-```console
-$ kubectl get pod -A
+```bash
+kubectl get pod -A
 ...
 ```
 
@@ -162,8 +167,8 @@ This should produce output similar to the following:
 Likewise, looking at the `ClaimAllocations` section of the
 `NodeAllocationState` object on the worker node will show which GPUs have been
 allocated to a given `ResourceClaim` by the resource driver:
-```console
-$ kubectl describe -n dra-rt-driver nas/dra-rt-driver-cluster-worker
+```bash
+kubectl describe -n dra-rt-driver nas/dra-rt-driver-cluster-worker
 ...
 Spec:
   ...
@@ -178,16 +183,16 @@ kubectl delete --wait=false --f rt-test{1,2,3,4}.yaml
 ```
 
 Wait for them to terminate:
-```console
-$ kubectl get pod -A
+```bash
+kubectl get pod -A
 
 ...
 ```
 
 And show that the `ClaimAllocations` section of the `NodeAllocationState`
 object on the worker node is now back to its initial state:
-```console
-$ kubectl describe -n dra-rt-driver nas/dra-example-driver-cluster-worker
+```bash
+kubectl describe -n dra-rt-driver nas/dra-example-driver-cluster-worker
 ...
 Spec:
 ```
@@ -207,7 +212,7 @@ For more information on the DRA Kubernetes feature and developing custom resourc
 ## Building the code 
 We start by first cloning this repository and `cd`ing into its `demo`
 subdirectory:
-```
+```bash
 git clone https://github.com/nasim-samimi/dra-rt-driver.git
 cd dra-rt-driver/demo
 ```
