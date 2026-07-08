@@ -42,52 +42,28 @@ if [[ $EUID -ne 0 ]]; then
   die "must run as root (sudo $0)"
 fi
 
-if (( RT_RUNTIME >= RT_PERIOD )); then
-  die "RT_RUNTIME ($RT_RUNTIME) must be strictly less than RT_PERIOD ($RT_PERIOD); a value >= period (or -1) disables RT group bandwidth and makes the chain un-seedable"
-fi
-
 # ----------------------------------------------------------------------------
-# 1) Enable global RT group bandwidth (runtime < period). This is the switch
-#    that lets any per-cgroup cpu.rt_runtime_us write succeed at all.
+# 1) DISABLE the global RT/DEADLINE bandwidth admission control by setting
+#    sched_rt_runtime_us = -1 (RUNTIME_INF). VERIFIED on this HCBS 7.0.0 kernel:
+#    with a finite global runtime the kernel's admission check
+#    (tg_rt_schedulable / "dl check tg") REFUSES the root cpu.rt_runtime_us write
+#    with EBUSY, so the whole chain is un-seedable and every container's RT write
+#    EINVALs. With -1 the admission check is bypassed, the root/parent slices
+#    accept their scalar budget, and the per-cgroup CBS/DEADLINE servers built
+#    from cpu.rt_runtime_us still throttle each group. (This is the setting that
+#    made rt-verify + the model1 sweeps work.)
 # ----------------------------------------------------------------------------
-log "enabling global RT bandwidth: sched_rt_period_us=$RT_PERIOD sched_rt_runtime_us=$RT_RUNTIME"
-echo "$RT_PERIOD"  > /proc/sys/kernel/sched_rt_period_us
-echo "$RT_RUNTIME" > /proc/sys/kernel/sched_rt_runtime_us
+log "disabling RT admission control: sched_rt_period_us=$RT_PERIOD sched_rt_runtime_us=-1"
+echo "$RT_PERIOD" > /proc/sys/kernel/sched_rt_period_us
+echo -1         > /proc/sys/kernel/sched_rt_runtime_us
 
 got_rt=$(cat /proc/sys/kernel/sched_rt_runtime_us)
-if [[ "$got_rt" == "-1" || "$got_rt" -ge "$RT_PERIOD" ]]; then
-  die "sched_rt_runtime_us is '$got_rt' (>= period or -1); RT group bandwidth is disabled - refusing to continue. Remove any sysctl drop-in that sets kernel.sched_rt_runtime_us = -1."
+if [[ "$got_rt" != "-1" ]]; then
+  die "could not set sched_rt_runtime_us=-1 (reads '$got_rt'); admission control is still on and the root write will be refused."
 fi
 
 # ----------------------------------------------------------------------------
-# 2) Build the even per-core write list "<rt> <cpu> <rt> <cpu> ..." across every
-#    currently-online CPU, so no core is left at 0 (an uneven seed makes the
-#    driver unable to place a cell on an unseeded core).
-# ----------------------------------------------------------------------------
-online=$(cat /sys/devices/system/cpu/online)   # e.g. "0-3" or "0,2-3"
-cpus=()
-IFS=',' read -ra ranges <<< "$online"
-for r in "${ranges[@]}"; do
-  if [[ "$r" == *-* ]]; then
-    lo=${r%-*}; hi=${r#*-}
-    for ((c=lo; c<=hi; c++)); do cpus+=("$c"); done
-  else
-    cpus+=("$r")
-  fi
-done
-(( ${#cpus[@]} > 0 )) || die "could not parse online CPUs from '$online'"
-
-pairs=""
-for c in "${cpus[@]}"; do
-  pairs+="${pairs:+ }$RT_RUNTIME $c"
-done
-log "online CPUs: ${cpus[*]}  ->  per-core seed: '$pairs'"
-
-# ----------------------------------------------------------------------------
-# 3) Wait for kubelet to have created kubepods.slice, then seed it and the
-#    besteffort child. NOTE: the cgroup-v2 root (/sys/fs/cgroup) is intentionally
-#    NOT written - its budget comes from the global sysctl above and a direct
-#    write returns EBUSY.
+# 2) Wait for kubelet to have created kubepods.slice.
 # ----------------------------------------------------------------------------
 KP="$CG/kubepods.slice"
 BE="$KP/kubepods-besteffort.slice"
@@ -98,17 +74,45 @@ while [[ ! -d "$KP" ]]; do
   sleep 2; waited=$((waited + 2))
 done
 
+# ----------------------------------------------------------------------------
+# 3) Seed the PARENT slices - root -> kubepods.slice -> kubepods-besteffort.slice
+#    - TOP-DOWN with a SCALAR reservation (RT_RUNTIME/RT_PERIOD applied to all
+#    cores). This is the form the HCBS 7.0.0 kernel accepts and was verified
+#    working: each parent gets cpu.rt_period_us (1000000) written BEFORE
+#    cpu.rt_runtime_us (950000). The kernel enforces, per core,
+#    Sum(children) <= parent, so root must be seeded first, then kubepods, then
+#    besteffort. Per-pod slices and container leaves get the exact PER-CORE
+#    reservation from the claim and are seeded by runc, not here.
+#
+#    The root MUST be seeded on a clean boot: a runtime CPU offline/online
+#    corrupts the root-domain SCHED_DEADLINE bandwidth the HCBS admission control
+#    checks, after which the root write is refused (EBUSY / "dl check tg") and
+#    only a reboot with all CPUs online restores it.
+# ----------------------------------------------------------------------------
+
 # seed_level <dir> : write period first (a fresh cgroup has period 0, and writing
-# a non-zero runtime while period is 0 is EINVAL), then the per-core runtime.
+# a non-zero runtime while period is 0 is EINVAL), then the SCALAR runtime.
+# Returns non-zero (without aborting under set -e) if the runtime write is
+# rejected, so the caller can emit an actionable message instead of a raw error.
 seed_level() {
   local dir="$1"
   [[ -d "$dir" ]] || { log "skip (absent): $dir"; return 0; }
-  echo "$RT_PERIOD" > "$dir/cpu.rt_period_us"
-  echo "$pairs"     > "$dir/cpu.rt_runtime_us"
-  log "seeded $(basename "$dir"): period=$RT_PERIOD runtime='$(cat "$dir/cpu.rt_runtime_us")'"
+  echo "$RT_PERIOD" > "$dir/cpu.rt_period_us" 2>/dev/null || true
+  if ! echo "$RT_RUNTIME" > "$dir/cpu.rt_runtime_us" 2>/dev/null; then
+    return 1
+  fi
+  log "seeded ${dir#"$CG"/}: period=$RT_PERIOD runtime=$(cat "$dir/cpu.rt_runtime_us")"
+  return 0
 }
 
-seed_level "$KP"
-seed_level "$BE"
+if ! seed_level "$CG" || ! seed_level "$KP" || ! seed_level "$BE"; then
+  root_rt=$(cat "$CG/cpu.rt_runtime_us" 2>/dev/null || echo '?')
+  die "could not seed the RT budget - a write was rejected (root cpu.rt_runtime_us='$root_rt').
+       This kernel's RT/DEADLINE admission control must be OFF for the root write to
+       succeed: confirm sched_rt_runtime_us=-1 (cat /proc/sys/kernel/sched_rt_runtime_us).
+       If it is -1 and the write still fails, run this seed once EARLY after boot
+       (before any RT pod establishes a deadline reservation)."
+fi
+fi
 
-log "done - node RT budget is seeded and reboot-safe via the systemd unit"
+log "done - node RT budget seeded (root -> kubepods -> besteffort = $RT_RUNTIME/$RT_PERIOD)"

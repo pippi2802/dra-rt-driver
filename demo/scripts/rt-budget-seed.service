@@ -9,8 +9,10 @@
 #   install -m0755 rt-budget-seed.sh /usr/local/sbin/rt-budget-seed.sh
 #   install -m0644 rt-budget-seed.service /etc/systemd/system/rt-budget-seed.service
 #   install -m0644 99-rt-budget.conf /etc/sysctl.d/99-rt-budget.conf
-#   # remove any old drop-in that disables RT group bandwidth:
-#   grep -rl 'sched_rt_runtime_us' /etc/sysctl.d /etc/sysctl.conf 2>/dev/null
+#   # 99-rt-budget.conf sets kernel.sched_rt_runtime_us = -1 (admission control
+#   # OFF) - REQUIRED so the root cpu.rt_runtime_us write is accepted. Make sure no
+#   # other drop-in overrides it back to a finite value:
+#   grep -rn 'sched_rt_runtime_us' /etc/sysctl.d /etc/sysctl.conf 2>/dev/null
 #   sysctl --system
 #   systemctl daemon-reload
 #   systemctl enable --now rt-budget-seed.service
@@ -28,11 +30,16 @@ After=kubelet.service
 Wants=kubelet.service
 # Only meaningful with cgroup v2 unified hierarchy mounted.
 ConditionPathExists=/sys/fs/cgroup/cgroup.controllers
+# Give up after 10 failures in 10 min instead of looping forever (e.g. when a
+# reboot is required to re-init the root RT budget). StartLimit* belong in [Unit].
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Tunables (must keep RT_RUNTIME strictly < RT_PERIOD; never -1):
+# Tunables (RT_RUNTIME/RT_PERIOD are the SCALAR budget seeded into the cgroups;
+# the script itself sets the global sched_rt_runtime_us=-1 to turn admission off):
 Environment=RT_PERIOD=1000000
 Environment=RT_RUNTIME=950000
 Environment=WAIT_SECS=120
@@ -40,8 +47,6 @@ ExecStart=/usr/local/sbin/rt-budget-seed.sh
 # If kubepods.slice is slow to appear on a cold boot, retry a few times.
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=600
-StartLimitBurst=10
 
 [Install]
 WantedBy=multi-user.target
