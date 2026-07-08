@@ -84,10 +84,9 @@ done
 #    besteffort. Per-pod slices and container leaves get the exact PER-CORE
 #    reservation from the claim and are seeded by runc, not here.
 #
-#    The root MUST be seeded on a clean boot: a runtime CPU offline/online
-#    corrupts the root-domain SCHED_DEADLINE bandwidth the HCBS admission control
-#    checks, after which the root write is refused (EBUSY / "dl check tg") and
-#    only a reboot with all CPUs online restores it.
+#    This only works with the admission control OFF (sched_rt_runtime_us=-1, set
+#    in step 1). With a finite global runtime the root write is refused
+#    (EBUSY / kernel log "tg_rt_schedulable ... dl check tg").
 # ----------------------------------------------------------------------------
 
 # seed_level <dir> : write period first (a fresh cgroup has period 0, and writing
@@ -112,7 +111,6 @@ if ! seed_level "$CG" || ! seed_level "$KP" || ! seed_level "$BE"; then
        succeed: confirm sched_rt_runtime_us=-1 (cat /proc/sys/kernel/sched_rt_runtime_us).
        If it is -1 and the write still fails, run this seed once EARLY after boot
        (before any RT pod establishes a deadline reservation)."
-fi
 fi
 
 log "done - node RT budget seeded (root -> kubepods -> besteffort = $RT_RUNTIME/$RT_PERIOD)"

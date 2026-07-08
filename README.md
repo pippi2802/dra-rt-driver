@@ -279,10 +279,28 @@ required). The chain it seeds is:
         cri-containerd-<containerID>.scope           (leaf)
 ```
 
+> **Critical prerequisite — turn the RT/DEADLINE admission control OFF.**
+> On the HCBS `7.0.0+` kernel the RT-bandwidth admission check
+> (`tg_rt_schedulable` / `dl check tg`) **refuses the cgroup-v2 root**
+> `cpu.rt_runtime_us` write with `Device or resource busy` (EBUSY) whenever the
+> global RT runtime is *finite* — this includes both `sched_rt_runtime_us=950000`
+> **and** `sched_rt_runtime_us == sched_rt_period_us`. With the root stuck at `0`,
+> the whole chain is un-seedable and every container's RT write fails `EINVAL`
+> (kernel log `children bw NNN > parent bw 0`). The fix is to set
+> **`kernel.sched_rt_runtime_us = -1`** (RUNTIME_INF), which bypasses the
+> admission check; the root/parent slices then accept their scalar budget, and the
+> per-cgroup CBS/DEADLINE servers built from `cpu.rt_runtime_us` still throttle
+> each group. This is applied by
+> [`demo/scripts/99-rt-budget.conf`](demo/scripts/99-rt-budget.conf) and the
+> [`rt-budget-seed`](demo/scripts/rt-budget-seed.service) systemd unit, which then
+> seeds `root → kubepods → besteffort` with the scalar `950000/1000000` on every
+> boot. **Do not** set a finite `sched_rt_runtime_us`, and never offline/online
+> CPUs at runtime (isolate at boot instead).
+
 * **Parents** (root, kubepods, besteffort) get a generous scalar reservation
   (`cpu.rt_runtime_us = 950000`, `cpu.rt_period_us = 1000000`) applied to all
-  cores. This is the standard global RT bound and leaves headroom for any
-  per-pod reservation that fits within it.
+  cores, written **top-down (root first)** so each child stays within its parent.
+  This requires `sched_rt_runtime_us = -1` (see the callout above).
 * **Pod slice and leaf scope(s)** get the exact per-core reservation requested
   by the claim, written in the multi-core form
   `cpu.rt_runtime_us = "<runtime> <cpu> <runtime> <cpu> ..."` (the removed
@@ -298,7 +316,11 @@ required). The chain it seeds is:
 
 ### Requirements for seeding to work
 
-* **Kernel:** the RT/HCBS kernel (e.g. `rt-cgroups-multi-260615`) with
+* **RT admission control OFF:** `kernel.sched_rt_runtime_us = -1`. This is the
+  single most important prerequisite — a finite value makes the root
+  `cpu.rt_runtime_us` write fail with EBUSY and the whole chain stays at `0`.
+  Confirm with `cat /proc/sys/kernel/sched_rt_runtime_us` (must print `-1`).
+* **Kernel:** the RT/HCBS kernel (e.g. `7.0.0+`, or `rt-cgroups-multi-*`) with
   `RT_GROUP_SCHED` and the multi-core HCBS patches. This is what creates the
   `cpu.rt_runtime_us` / `cpu.rt_period_us` files and enforces the admission
   tests. Confirm with `cat /sys/fs/cgroup/cpu.rt_runtime_us`.
