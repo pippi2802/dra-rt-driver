@@ -1,0 +1,47 @@
+# rt-budget-seed.service - seed the node-wide H-CBS RT budget on every boot.
+#
+# The per-cgroup RT bandwidth (cpu.rt_runtime_us) on this kernel is in-memory
+# node state that a reboot zeroes, and it can only be written while global RT
+# group bandwidth is enabled. This unit re-establishes both after kubelet has
+# created kubepods.slice, so RT pods can be admitted immediately after a reboot.
+#
+# INSTALL (on the worker, as root):
+#   install -m0755 rt-budget-seed.sh /usr/local/sbin/rt-budget-seed.sh
+#   install -m0644 rt-budget-seed.service /etc/systemd/system/rt-budget-seed.service
+#   install -m0644 99-rt-budget.conf /etc/sysctl.d/99-rt-budget.conf
+#   # remove any old drop-in that disables RT group bandwidth:
+#   grep -rl 'sched_rt_runtime_us' /etc/sysctl.d /etc/sysctl.conf 2>/dev/null
+#   sysctl --system
+#   systemctl daemon-reload
+#   systemctl enable --now rt-budget-seed.service
+#
+# VERIFY:
+#   systemctl status rt-budget-seed.service
+#   grep -H . /sys/fs/cgroup/kubepods.slice/cpu.rt_runtime_us \
+#            /sys/fs/cgroup/kubepods.slice/kubepods-besteffort.slice/cpu.rt_runtime_us
+
+[Unit]
+Description=Seed node-wide H-CBS real-time cgroup budget (reboot-safe)
+Documentation=file:///usr/local/sbin/rt-budget-seed.sh
+# kubepods.slice is created by kubelet; wait for it before seeding.
+After=kubelet.service
+Wants=kubelet.service
+# Only meaningful with cgroup v2 unified hierarchy mounted.
+ConditionPathExists=/sys/fs/cgroup/cgroup.controllers
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Tunables (must keep RT_RUNTIME strictly < RT_PERIOD; never -1):
+Environment=RT_PERIOD=1000000
+Environment=RT_RUNTIME=950000
+Environment=WAIT_SECS=120
+ExecStart=/usr/local/sbin/rt-budget-seed.sh
+# If kubepods.slice is slow to appear on a cold boot, retry a few times.
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Install]
+WantedBy=multi-user.target
