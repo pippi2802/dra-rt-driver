@@ -109,8 +109,9 @@ for s in "${scopes[@]}"; do
   for c in $cores; do CORE_COUNT[$c]=$(( ${CORE_COUNT[$c]:-0} + 1 )); done
 done
 
-if [[ ${#S_PATH[@]} -eq 0 ]]; then
-  echo "No RT workload containers found. Are the RT pods Running?"
+if [[ -z "${S_PATH[*]:-}" ]]; then
+  echo "No RT workload containers found. Are the RT pods Running, and did runc"
+  echo "seed their leaf cpu.rt_runtime_us? (check with verify-rt.sh)"
   exit 1
 fi
 
