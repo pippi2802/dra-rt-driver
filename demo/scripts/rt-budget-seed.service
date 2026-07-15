@@ -9,9 +9,11 @@
 #   install -m0755 rt-budget-seed.sh /usr/local/sbin/rt-budget-seed.sh
 #   install -m0644 rt-budget-seed.service /etc/systemd/system/rt-budget-seed.service
 #   install -m0644 99-rt-budget.conf /etc/sysctl.d/99-rt-budget.conf
-#   # 99-rt-budget.conf sets kernel.sched_rt_runtime_us = -1 (admission control
-#   # OFF) - REQUIRED so the root cpu.rt_runtime_us write is accepted. Make sure no
-#   # other drop-in overrides it back to a finite value:
+#   # 99-rt-budget.conf sets a FINITE global (kernel.sched_rt_runtime_us=1000000,
+#   # period=1000000) so admission control / throttling stay ON. The ~20% reserve
+#   # for non-RT (CFS) work comes from the HCBS DEADLINE fair-server, so the RT
+#   # ceiling under kubepods is ~80% (the cap this unit seeds). -1 is NOT used.
+#   # Make sure no other drop-in overrides these back:
 #   grep -rn 'sched_rt_runtime_us' /etc/sysctl.d /etc/sysctl.conf 2>/dev/null
 #   sysctl --system
 #   systemctl daemon-reload
@@ -19,8 +21,7 @@
 #
 # VERIFY:
 #   systemctl status rt-budget-seed.service
-#   grep -H . /sys/fs/cgroup/kubepods.slice/cpu.rt_runtime_us \
-#            /sys/fs/cgroup/kubepods.slice/kubepods-besteffort.slice/cpu.rt_runtime_us
+#   grep -H . /sys/fs/cgroup/kubepods.slice/cpu.rt_runtime_us
 
 [Unit]
 Description=Seed node-wide H-CBS real-time cgroup budget (reboot-safe)
@@ -38,8 +39,10 @@ StartLimitBurst=10
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Tunables (RT_RUNTIME/RT_PERIOD are the SCALAR budget seeded into the cgroups;
-# the script itself sets the global sched_rt_runtime_us=-1 to turn admission off):
+# Tunables: RT_RUNTIME/RT_PERIOD are the node RT cap seeded into kubepods.slice
+# (Model A - only the top cap; runc grows the QoS/pod/leaf levels under it). The
+# global stays FINITE (set via 99-rt-budget.conf), so admission control remains
+# ON. 950000/1000000 = 95% matches the driver's admission threshold (Eq.1 <= 0.95).
 Environment=RT_PERIOD=1000000
 Environment=RT_RUNTIME=950000
 Environment=WAIT_SECS=120
