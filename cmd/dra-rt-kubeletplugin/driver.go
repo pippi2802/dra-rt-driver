@@ -116,10 +116,22 @@ func (d *driver) nodePrepareResource(ctx context.Context, claim *drapbv1.Claim) 
 	var prepared []string
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
+		// Refresh the cached NAS before reading AllocatedClaims from it. The
+		// controller writes the allocation to the NAS asynchronously, so the
+		// Spec cached on the driver struct may not yet contain this claim when
+		// the kubelet first calls NodePrepareResources. Reading that stale Spec
+		// made WriteCgroupToCDI return empty rtCDIDevices, which then tripped the
+		// CreateClaimSpecFile guard ("rtCDIDevices is nil or incomplete: []") and
+		// surfaced as a FailedPrepareDynamicResources event; the pod only started
+		// once the kubelet retried and the cache had caught up (~90s later).
+		if err := d.nasclient.Get(ctx); err != nil {
+			return err
+		}
+
 		rtCDIDevices, err := d.state.cdi.WriteCgroupToCDI(claim, d.nascrd.Spec)
-		// if err != nil {
-		// 	return fmt.Errorf("error writing cgroup to CDI: %v", err)
-		// }
+		if err != nil {
+			return fmt.Errorf("error writing cgroup to CDI: %v", err)
+		}
 		// UpdateParentCgroup(claim, d.nascrd.Spec)
 		prepared, err = d.prepare(ctx, claim.Uid, rtCDIDevices)
 		if err != nil {

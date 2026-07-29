@@ -89,14 +89,15 @@ fi
 # dependent. Read it from debugfs and clamp, keeping a 5%-of-period safety margin.
 DL_UNIT=1048576
 dbg=/sys/kernel/debug/sched/debug
+MARGIN=${MARGIN:-10000}   # us kept below the free ceiling (rounding guard); tune via env
 bw=$(grep -m1 'dl_bw->bw'        "$dbg" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
 tot=$(grep -m1 'dl_bw->total_bw' "$dbg" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
 if [[ -n "$bw" && -n "$tot" ]] && (( bw > tot )); then
   free_us=$(( (bw - tot) * RT_PERIOD / DL_UNIT ))   # free budget in microseconds
-  ceil=$(( free_us - RT_PERIOD/20 ))                # 5%-of-period safety margin
+  ceil=$(( free_us - MARGIN ))                      # small rounding-guard margin
   (( ceil > 0 )) || ceil=$free_us
   if (( RT_RUNTIME > ceil )); then
-    log "free DL budget ~${free_us}us (bw=$bw total_bw=$tot); clamping RT_RUNTIME $RT_RUNTIME -> $ceil"
+    log "free DL budget ~${free_us}us (bw=$bw total_bw=$tot, of which total_bw is the ~20% CFS fair-server); clamping RT_RUNTIME $RT_RUNTIME -> $ceil (margin ${MARGIN}us)"
     RT_RUNTIME=$ceil
   else
     log "free DL budget ~${free_us}us (bw=$bw total_bw=$tot); RT_RUNTIME=$RT_RUNTIME fits"
