@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Kubernetes Authors.
+ * Copyright 2026 The Kubernetes Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@ package v1alpha1
 import (
 	"net/http"
 
-	v1alpha1 "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
-	"github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/scheme"
+	v1alpha1 "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
+	"github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
 

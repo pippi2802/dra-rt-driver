@@ -25,7 +25,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	exampleclientset "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
+	exampleclientset "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
 )
 
 type KubeClientConfig struct {

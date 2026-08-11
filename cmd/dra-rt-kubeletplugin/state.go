@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"sync"
 
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
 )
 
 type AllocatableRtCpus map[int]*AllocatableCpusetInfo

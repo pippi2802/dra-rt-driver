@@ -213,7 +213,7 @@ For more information on the DRA Kubernetes feature and developing custom resourc
 We start by first cloning this repository and `cd`ing into its `demo`
 subdirectory:
 ```bash
-git clone https://github.com/nasim-samimi/dra-rt-driver.git
+git clone https://github.com/pippi2802/dra-rt-driver.git
 cd dra-rt-driver/demo
 ```
 We build the image for the example resource driver:

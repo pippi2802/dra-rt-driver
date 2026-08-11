@@ -17,7 +17,7 @@
 package v1alpha1
 
 import (
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
 )
 
 const (
@@ -43,5 +43,6 @@ func DefaultRtClaimParametersSpec() *RtClaimParametersSpec {
 		Count:   1,
 		Runtime: 10, //should we put the default as miliseconds?
 		Period:  100,
+		RequestedCpus: []int{0},
 	}
 }

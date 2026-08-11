@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Kubernetes Authors.
+ * Copyright 2026 The Kubernetes Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,11 @@
 package fake
 
 import (
-	clientset "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
-	nasv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
-	fakenasv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1/fake"
-	rtv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1"
-	fakertv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1/fake"
+	clientset "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
+	nasv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
+	fakenasv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1/fake"
+	rtv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1"
+	fakertv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"

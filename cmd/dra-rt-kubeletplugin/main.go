@@ -28,10 +28,10 @@ import (
 	plugin "k8s.io/dynamic-resource-allocation/kubeletplugin"
 	"k8s.io/klog/v2"
 
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
-	rtcrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
-	exampleclientset "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
-	"github.com/nasim-samimi/dra-rt-driver/pkg/flags"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	rtcrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
+	exampleclientset "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
+	"github.com/pippi2802/dra-rt-driver/pkg/flags"
 )
 
 const (

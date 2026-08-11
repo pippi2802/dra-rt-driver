@@ -25,6 +25,7 @@ type RtClaimParametersSpec struct {
 	Count   int `json:"count,omitempty"`
 	Runtime int `json:"runtime,omitempty"`
 	Period  int `json:"period,omitempty"`
+	RequestedCpus []int `json:"requestedCpus,omitempty"`
 }
 
 // +genclient

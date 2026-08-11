@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Kubernetes Authors.
+ * Copyright 2026 The Kubernetes Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"net/http"
 
-	nasv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
-	rtv1alpha1 "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1"
+	nasv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
+	rtv1alpha1 "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/rt/v1alpha1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

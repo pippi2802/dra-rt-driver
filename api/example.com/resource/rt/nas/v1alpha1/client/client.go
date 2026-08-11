@@ -23,8 +23,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
-	nasclient "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	nasclient "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned/typed/nas/v1alpha1"
 )
 
 type Client struct {

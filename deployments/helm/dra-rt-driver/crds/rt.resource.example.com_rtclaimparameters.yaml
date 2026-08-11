@@ -45,6 +45,10 @@ spec:
                 type: integer
               period:
                 type: integer
+              requestedCpus:
+                items:
+                  type: integer
+                type: array
               runtime:
                 type: integer
             type: object

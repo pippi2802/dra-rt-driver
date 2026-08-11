@@ -26,10 +26,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/dynamic-resource-allocation/controller"
 
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
-	nasclient "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1/client"
-	rtcrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
-	clientset "github.com/nasim-samimi/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	nasclient "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1/client"
+	rtcrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
+	clientset "github.com/pippi2802/dra-rt-driver/pkg/example.com/resource/clientset/versioned"
 )
 
 const (

@@ -22,13 +22,13 @@ import (
 	"strconv"
 	"sync"
 
-	nascrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	nascrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
 
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1alpha2"
 	"k8s.io/dynamic-resource-allocation/controller"
 
-	rtcrd "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
+	rtcrd "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/v1alpha1"
 )
 
 type rtdriver struct {
@@ -52,6 +52,9 @@ func (g *rtdriver) ValidateClaimParameters(claimParams *rtcrd.RtClaimParametersS
 func (g *rtdriver) Allocate(crd *nascrd.NodeAllocationState, claim *resourcev1.ResourceClaim, claimParams *rtcrd.RtClaimParametersSpec, class *resourcev1.ResourceClass, classParams *rtcrd.DeviceClassParametersSpec, selectedNode string) (OnSuccessCallback, error) {
 	claimUID := string(claim.UID)
 
+	/*
+		Old Worst-Fit allocation logic
+	*/
 	if !g.PendingAllocatedClaims.Exists(claimUID, selectedNode) {
 		return nil, fmt.Errorf("no allocations generated for claim '%v' on node '%v' yet", claim.UID, selectedNode)
 	}
@@ -78,6 +81,28 @@ func (g *rtdriver) Allocate(crd *nascrd.NodeAllocationState, claim *resourcev1.R
 		// }
 		g.PendingAllocatedClaims.Remove(claimUID)
 	}
+
+	// /*
+	// Worst-Fit with requested cpus logic
+	// */
+
+	// // checks if the claim exists in the pending claims
+	// if !g.PendingAllocatedClaims.Exists(claimUID, selectedNode) {
+	// 	return nil, fmt.Errorf("no allocations generated for claim '%v' on node '%v' yet", claim.UID, selectedNode)
+	// }
+
+	// // start allocation
+	// fmt.Println("------------------------ALLOCATE--------------------------------")
+	// fmt.Println("Allocate, crd.Spec.AllocatedUtilToCpu before getting value from pending:", crd.Spec.AllocatedUtilToCpu)
+
+	// // check if the claim has already been allocated
+	// if _, exists := crd.Spec.AllocatedClaims[claimUID]; exists {
+	// 	fmt.Println("Allocate, the claim is already allocated:", crd.Spec.AllocatedClaims[claimUID].RtCpu.Cpuset)
+	// 	return nil, nil
+	// }
+
+	// // allocate the claim
+	// crd.Spec.AllocatedClaims[claimUID] = g.PendingAllocatedClaims.Get(claimUID, selectedNode)
 
 	return onSuccess, nil
 }
@@ -116,7 +141,11 @@ func (rt *rtdriver) UnsuitableNode(crd *nascrd.NodeAllocationState, pod *corev1.
 	// defer utilLock.Unlock()
 	cgroupUID := string(pod.UID)
 
-	allocated, _ := rt.allocate(crd, pod, rtcas, allcas, potentialNode)
+	allocated, _, err := rt.allocate(crd, pod, rtcas, allcas, potentialNode)
+	if err != nil {
+		fmt.Println("unsuitableNode: allocate failed:", err)
+	}
+
 	util := make(map[string]nascrd.AllocatedUtil)
 	for id, cpu := range crd.Spec.AllocatedUtilToCpu.Cpus {
 		util[id] = nascrd.AllocatedUtil{
@@ -175,16 +204,23 @@ func (rt *rtdriver) UnsuitableNode(crd *nascrd.NodeAllocationState, pod *corev1.
 	return nil
 }
 
-func (rt *rtdriver) allocate(crd *nascrd.NodeAllocationState, pod *corev1.Pod, cpucas []*controller.ClaimAllocation, allcas []*controller.ClaimAllocation, node string) (map[string][]nascrd.AllocatedCpu, map[string]nascrd.AllocatedUtil) {
+/*
+cpucas -> cpu resource claim types
+allcas -> all resource claims
+*/
+func (rt *rtdriver) allocate(crd *nascrd.NodeAllocationState, pod *corev1.Pod, cpucas []*controller.ClaimAllocation, allcas []*controller.ClaimAllocation, node string) (map[string][]nascrd.AllocatedCpu, map[string]nascrd.AllocatedUtil, error) {
+
 	available := make(map[int]*nascrd.AllocatableCpu)
-	// util := crd.Spec.AllocatedUtilToCpu.Cpus
 	util := make(map[string]nascrd.AllocatedUtil)
+
 	fmt.Println("/////////////////////////////////////////////////allocate/////////////////////////////////////////////////////")
+
 	for id, cpu := range crd.Spec.AllocatedUtilToCpu.Cpus {
 		util[id] = nascrd.AllocatedUtil{
 			Util: cpu.Util,
 		}
 	}
+
 	allocated := make(map[string][]nascrd.AllocatedCpu)
 
 	for _, device := range crd.Spec.AllocatableCpuset {
@@ -199,49 +235,122 @@ func (rt *rtdriver) allocate(crd *nascrd.NodeAllocationState, pod *corev1.Pod, c
 	for _, ca := range cpucas {
 		claimUID := string(ca.Claim.UID)
 		fmt.Println("allocate, claimUID:", claimUID)
+
 		if _, exists := crd.Spec.AllocatedClaims[claimUID]; exists {
 			devices := crd.Spec.AllocatedClaims[claimUID].RtCpu.Cpuset
 			for _, device := range devices {
 				allocated[claimUID] = append(allocated[claimUID], device)
 			}
 			fmt.Println("the claim is already allocated and its devices are:", devices)
-
 			continue
 		}
 
 		claimParams, _ := ca.ClaimParameters.(*rtcrd.RtClaimParametersSpec)
 		claimUtil := (claimParams.Runtime * 1000 / claimParams.Period)
 		var devices []nascrd.AllocatedCpu
-		worstFitCpus, err := cpuPartitioning(util, claimUtil, claimParams.Count, "worstFit") //must get the policy from the user
-		if err != nil {
-			return nil, nil
-		}
-		fmt.Println("worstFitCpus:", worstFitCpus)
-		for i := 0; i < claimParams.Count; i++ {
-			// for _, device := range available {
 
-			worstFitCpusStr, _ := strconv.Atoi(worstFitCpus[i])
-			d := nascrd.AllocatedCpu{
-				ID:      worstFitCpusStr,
-				Runtime: claimParams.Runtime,
-				Period:  claimParams.Period,
+		requested := claimParams.RequestedCpus
+
+		switch {
+		case len(requested) > claimParams.Count:
+			// more candidates than needed: score only the requested ones,
+			// let cpuPartitioning pick the best `Count` among them.
+			subset := make(map[string]nascrd.AllocatedUtil)
+			for _, id := range requested {
+				subset[strconv.Itoa(id)] = util[strconv.Itoa(id)]
 			}
-			util[strconv.Itoa(d.ID)] = nascrd.AllocatedUtil{
-				Util: util[strconv.Itoa(d.ID)].Util + claimUtil,
+			chosen, err := cpuPartitioning(subset, claimUtil, claimParams.Count, "worstFit")
+			if err != nil {
+				return nil, nil, fmt.Errorf("claim %s: not enough of the requested cpus %v have room: %w", claimUID, requested, err)
 			}
-			if util[strconv.Itoa(d.ID)].Util > 950 {
-				delete(available, d.ID)
+			for _, idStr := range chosen {
+				id, _ := strconv.Atoi(idStr)
+				devices = append(devices, commitCpu(util, available, id, claimParams, claimUtil))
 			}
-			devices = append(devices, d)
+
+		case len(requested) > 0:
+			// requested cpus are guaranteed if they fit -- validate ALL of
+			// them first, commit none until every one passes, so a failure
+			// partway through never leaves partial util changes behind for
+			// other claims in this same batch to see.
+			for _, id := range requested {
+				if _, exists := available[id]; !exists {
+					return nil, nil, fmt.Errorf("claim %s: requested cpu %d does not exist on this node", claimUID, id)
+				}
+				if util[strconv.Itoa(id)].Util+claimUtil > 950 {
+					return nil, nil, fmt.Errorf("claim %s: requested cpu %d cannot fit claim (current util %d, needs %d, cap 950)",
+						claimUID, id, util[strconv.Itoa(id)].Util, claimUtil)
+				}
+			}
+			for _, id := range requested {
+				devices = append(devices, commitCpu(util, available, id, claimParams, claimUtil))
+			}
+
+			if remaining := claimParams.Count - len(requested); remaining > 0 {
+				pool := make(map[string]nascrd.AllocatedUtil)
+				for id, u := range util {
+					if !contains(requested, id) {
+						pool[id] = u
+					}
+				}
+				worstFitCpus, err := cpuPartitioning(pool, claimUtil, remaining, "worstFit")
+				if err != nil {
+					return nil, nil, fmt.Errorf("claim %s: %w", claimUID, err)
+				}
+				for _, idStr := range worstFitCpus {
+					id, _ := strconv.Atoi(idStr)
+					devices = append(devices, commitCpu(util, available, id, claimParams, claimUtil))
+				}
+			}
+
+		default:
+			// no requested cpus at all: original behavior, unchanged.
+			worstFitCpus, err := cpuPartitioning(util, claimUtil, claimParams.Count, "worstFit") //must get the policy from the user
+			if err != nil {
+				return nil, nil, fmt.Errorf("claim %s: %w", claimUID, err)
+			}
+			fmt.Println("worstFitCpus:", worstFitCpus)
+			for _, idStr := range worstFitCpus {
+				id, _ := strconv.Atoi(idStr)
+				devices = append(devices, commitCpu(util, available, id, claimParams, claimUtil))
+			}
 		}
+
 		allocated[claimUID] = devices
 		fmt.Println("allocate, allocated:", allocated)
-
 	}
-	fmt.Println("it picked the worstfit cpus for the claim and the utils are:", util)
+
+	fmt.Println("it picked the cpus for the claim and the utils are:", util)
 	fmt.Println("/////////////////////////////////////////////endallocate////////////////////////////////////////////////////////")
 
-	return allocated, util
+	return allocated, util, nil
+}
+
+// commitCpu records one cpu assignment and updates its running utilization --
+// pulled out since the same five lines were repeated in every branch above.
+func commitCpu(util map[string]nascrd.AllocatedUtil, available map[int]*nascrd.AllocatableCpu, id int, claimParams *rtcrd.RtClaimParametersSpec, claimUtil int) nascrd.AllocatedCpu {
+	d := nascrd.AllocatedCpu{
+		ID:      id,
+		Runtime: claimParams.Runtime,
+		Period:  claimParams.Period,
+	}
+	util[strconv.Itoa(id)] = nascrd.AllocatedUtil{
+		Util: util[strconv.Itoa(id)].Util + claimUtil,
+	}
+	if util[strconv.Itoa(id)].Util > 950 {
+		delete(available, id)
+	}
+	return d
+}
+
+func contains(xs []int, idStr string) bool {
+	id, _ := strconv.Atoi(idStr)
+	for _, x := range xs {
+		if x == id {
+			return true
+		}
+	}
+	return false
 }
 
 func cpuPartitioning(spec map[string]nascrd.AllocatedUtil, reqUtil int, reqCpus int, policy string) ([]string, error) {

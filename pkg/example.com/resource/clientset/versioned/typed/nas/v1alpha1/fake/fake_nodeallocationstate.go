@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The Kubernetes Authors.
+ * Copyright 2026 The Kubernetes Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ package fake
 import (
 	"context"
 
-	v1alpha1 "github.com/nasim-samimi/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
+	v1alpha1 "github.com/pippi2802/dra-rt-driver/api/example.com/resource/rt/nas/v1alpha1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
 	types "k8s.io/apimachinery/pkg/types"

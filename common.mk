@@ -15,7 +15,7 @@
 GOLANG_VERSION ?= 1.22.2
 
 DRIVER_NAME := dra-rt-driver
-MODULE := github.com/nasim-samimi/$(DRIVER_NAME)
+MODULE := github.com/pippi2802/$(DRIVER_NAME)
 
 VERSION  ?= v0.1.0
 vVERSION := v$(VERSION:v%=%)
