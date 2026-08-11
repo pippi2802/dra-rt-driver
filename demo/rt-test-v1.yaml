@@ -1,34 +1,13 @@
-# Two pods, one container each
-# Each container asking for 1 distinct GPU
-
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: rt-test1
-
----
-apiVersion: resource.k8s.io/v1alpha2
-kind: ResourceClaimTemplate
-metadata:
-  namespace: rt-test1
-  name: rt.example.com
-spec:
-  spec:
-    resourceClassName: rt.example.com
-    parametersRef:
-      apiGroup: rt.resource.example.com
-      kind: RtClaimParameters
-      name: rtclaims
-
----
-
-apiVersion: rt.resource.example.com/v1alpha1
-kind: RtClaimParameters
-metadata:
-  namespace: rt-test1
-  name: rtclaims
-
+# Two pods, one container each                                                                                                                                                                                                                                                
+# Each container asking for 1 distinct cpu                                                                                                                                                                                                                                    
+                                                                                                                                                                                                                                                                                
+---                                                                                                                                                                                                                                                                           
+apiVersion: v1                                                                                                                                                                                                                                                                
+kind: Namespace                                                                                                                                                                                                                                                               
+metadata:                                                                                                                                                                                                                                                                     
+  name: rt-test1                                                                                                                                                                                                                                                              
+                                                                                                                                                                                                                                                                                
+---                                                                                                                                                                                                                                                                           
 apiVersion: rt.resource.example.com/v1alpha1
 kind: RtClaimParameters
 metadata:
@@ -40,7 +19,7 @@ spec:
   period: 1000
   requestedCpus: [1]
 
----
+---           
 apiVersion: rt.resource.example.com/v1alpha1
 kind: RtClaimParameters
 metadata:
@@ -52,16 +31,40 @@ spec:
   period: 1000
   requestedCpus: [2]
 
+---
+apiVersion: resource.k8s.io/v1alpha2
+kind: ResourceClaimTemplate
+metadata:
+  namespace: rt-test1
+  name: rt-claim-template0
+spec:
+  spec:
+    resourceClassName: rt.example.com
+    parametersRef:
+      apiGroup: rt.resource.example.com
+      kind: RtClaimParameters
+      name: rtclaims0
 
 ---
+apiVersion: resource.k8s.io/v1alpha2
+kind: ResourceClaimTemplate  
+spec:
+  spec: 
+    resourceClassName: rt.example.com
+    parametersRef:
+      apiGroup: rt.resource.example.com
+      kind: RtClaimParameters
+      name: rtclaims1
+      
+---   
 apiVersion: v1
 kind: Pod
 metadata:
-  namespace: rt-test1
+  namespace: rt-test1                  
   name: pod0
-  labels:
-    app: pod
+  labels: { app: pod }
 spec:
+  tolerations: [{ operator: Exists }]
   containers:
   - name: ctr0
     image: ubuntu:22.04
@@ -73,7 +76,7 @@ spec:
   resourceClaims:
   - name: rtcpu
     source:
-      resourceClaimTemplateName: rt.example.com
+      resourceClaimTemplateName: rt-claim-template0
 
 ---
 apiVersion: v1
@@ -81,9 +84,9 @@ kind: Pod
 metadata:
   namespace: rt-test1
   name: pod1
-  labels:
-    app: pod
+  labels: { app: pod }
 spec:
+  tolerations: [{ operator: Exists }]
   containers:
   - name: ctr0
     image: ubuntu:22.04
@@ -95,4 +98,4 @@ spec:
   resourceClaims:
   - name: rtcpu
     source:
-      resourceClaimTemplateName: rt.example.com
+      resourceClaimTemplateName: rt-claim-template1   
