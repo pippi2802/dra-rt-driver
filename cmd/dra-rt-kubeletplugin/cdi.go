@@ -132,7 +132,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, devices *PreparedCpu
 
 	switch devices.Type() {
 	case nascrd.RtCpuType:
-		if rtCDIDevices == nil || len(rtCDIDevices) < 2 {
+		if rtCDIDevices == nil || len(rtCDIDevices) < 3 {
 			rtlog("CreateClaimSpecFile claim=%s GUARD TRIPPED (rtCDIDevices nil/len<2) -> per-claim spec NOT written", claimUID)
 			return fmt.Errorf("rtCDIDevices is nil or incomplete: %v", rtCDIDevices)
 		}
@@ -158,7 +158,7 @@ func (cdi *CDIHandler) CreateClaimSpecFile(claimUID string, devices *PreparedCpu
 				ContainerEdits: cdispec.ContainerEdits{
 					Env: []string{
 						fmt.Sprintf("RT_RUNTIME_PERIOD=%s", rtCDIDevices[0]),
-						fmt.Sprintf("RT_CPUSET=%s", rtCDIDevices[1]),
+						fmt.Sprintf("RT_CPUSET=%s", rtCDIDevices[2]),
 					},
 				},
 			},
@@ -232,32 +232,37 @@ func (cdi *CDIHandler) WriteCgroupToCDI(claim *drapbv1.Claim, crd nascrd.NodeAll
 	cpusets := ""
 	runtime = fmt.Sprintf("runtime-%v", crd.AllocatedClaims[claim.Uid].RtCpu.Cpuset[0].Runtime)
 	period = fmt.Sprintf("period-%v", crd.AllocatedClaims[claim.Uid].RtCpu.Cpuset[0].Period)
-	var builder strings.Builder
+	// rtCDIDevices[1] doubles as the CDI *device name* elsewhere (see
+	// CreateClaimSpecFile/GetClaimDevices) -- CDI device names have a
+	// restricted character set that rejects commas, so it has to stay
+	// underscore-joined here. rtCDIDevices[2] is the separate,
+	// comma-joined value actually meant for the RT_CPUSET env var (see
+	// below): a hyphen there is ambiguous with job.yaml's own RT_CPUSET
+	// normalization, which correctly treats "a-b" as an inclusive range
+	// for the reversed-range bug fixed 2026-08-09. Every prior allocation
+	// happened to use consecutive cpu pairs, where hyphen-joined-list and
+	// inclusive-range mean the same thing by coincidence -- requestedCpus
+	// letting callers ask for non-consecutive, physically-separated pairs
+	// (e.g. 1,3) exposed the ambiguity for real: "1-3" got expanded to
+	// {1,2,3} instead of the two cpus actually allocated. Splitting into
+	// two separate strings avoids re-breaking the CDI naming rules while
+	// still fixing the env var.
+	var nameBuilder, envBuilder strings.Builder
 	for _, cgroup := range crd.AllocatedClaims[claim.Uid].RtCpu.Cpuset {
 		fmt.Println("allocatedCgroups:", cgroup)
-		if builder.Len() > 0 {
-			// comma, not a range operator -- a hyphen here is ambiguous with
-			// job.yaml's own RT_CPUSET normalization (which correctly treats
-			// "a-b" as an inclusive range for the reversed-range bug fixed
-			// 2026-08-09). Every prior allocation happened to use consecutive
-			// cpu pairs, where hyphen-joined-list and inclusive-range mean
-			// the same thing by coincidence -- requestedCpus letting callers
-			// ask for non-consecutive, physically-separated pairs (e.g. 1,3)
-			// exposed the ambiguity for real: "1-3" got expanded to {1,2,3}
-			// instead of the two cpus actually allocated.
-			builder.WriteString(",")
+		if nameBuilder.Len() > 0 {
+			nameBuilder.WriteString("_")
+			envBuilder.WriteString(",")
 		}
-		builder.WriteString(strconv.Itoa(cgroup.ID))
+		nameBuilder.WriteString(strconv.Itoa(cgroup.ID))
+		envBuilder.WriteString(strconv.Itoa(cgroup.ID))
 	}
-	fmt.Println("cgroup.go, builder:", builder.String())
-	claimCpuset := builder.String()
-	// if claimCpuset == "" {
-	// 	claimCpuset = "0"
-	// }
-	cpusets = fmt.Sprintf("%v", claimCpuset)
+	fmt.Println("cgroup.go, builder:", nameBuilder.String())
+	cpusets = nameBuilder.String()
 
 	rtCDIDevices = append(rtCDIDevices, fmt.Sprintf("%v.%v", runtime, period))
 	rtCDIDevices = append(rtCDIDevices, cpusets)
+	rtCDIDevices = append(rtCDIDevices, envBuilder.String())
 	fmt.Println("writecgrouptocdi, rtcdidevices:", rtCDIDevices)
 
 	return rtCDIDevices, nil
