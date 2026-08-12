@@ -236,7 +236,16 @@ func (cdi *CDIHandler) WriteCgroupToCDI(claim *drapbv1.Claim, crd nascrd.NodeAll
 	for _, cgroup := range crd.AllocatedClaims[claim.Uid].RtCpu.Cpuset {
 		fmt.Println("allocatedCgroups:", cgroup)
 		if builder.Len() > 0 {
-			builder.WriteString("-") // TODO: change this later to comma
+			// comma, not a range operator -- a hyphen here is ambiguous with
+			// job.yaml's own RT_CPUSET normalization (which correctly treats
+			// "a-b" as an inclusive range for the reversed-range bug fixed
+			// 2026-08-09). Every prior allocation happened to use consecutive
+			// cpu pairs, where hyphen-joined-list and inclusive-range mean
+			// the same thing by coincidence -- requestedCpus letting callers
+			// ask for non-consecutive, physically-separated pairs (e.g. 1,3)
+			// exposed the ambiguity for real: "1-3" got expanded to {1,2,3}
+			// instead of the two cpus actually allocated.
+			builder.WriteString(",")
 		}
 		builder.WriteString(strconv.Itoa(cgroup.ID))
 	}
